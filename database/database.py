@@ -150,3 +150,56 @@ def get_hostname_stats(hostname: str):
             else None
         ),
     }
+def get_top_hostnames(limit: int = 10):
+    conn = get_connection()
+
+    cursor = conn.execute(
+        """
+        SELECT
+            hostname,
+            COUNT(*) AS total_tests,
+            SUM(
+                CASE
+                    WHEN status = 'ACTIVE' THEN 1
+                    ELSE 0
+                END
+            ) AS successful_tests,
+            AVG(latency_ms) AS average_latency
+        FROM test_results
+        GROUP BY hostname
+        HAVING COUNT(*) > 0
+        ORDER BY
+            (successful_tests * 1.0 / total_tests) DESC,
+            average_latency ASC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    rankings = []
+
+    for hostname, total, successful, average_latency in rows:
+        success_rate = (
+            (successful / total) * 100
+            if total
+            else 0
+        )
+
+        rankings.append(
+            {
+                "hostname": hostname,
+                "total_tests": total,
+                "successful_tests": successful,
+                "success_rate": round(success_rate, 1),
+                "average_latency": (
+                    round(average_latency)
+                    if average_latency is not None
+                    else None
+                ),
+            }
+        )
+
+    return rankings
