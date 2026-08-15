@@ -8,11 +8,17 @@ from aiogram.types import Message, CallbackQuery
 
 from bot.keyboards import main_menu, network_menu
 from scanner.tester import test_hostname
-from database.database import save_result, get_recent_results, get_hostname_stats
+from database.database import (
+    save_result,
+    get_recent_results,
+    get_hostname_stats,
+    get_top_hostnames,
+)
 
 router = Router()
 
-# 5 tests per user every 60 seconds
+# Rate limit:
+# Maximum 5 tests per user every 60 seconds.
 RATE_LIMIT = 5
 RATE_WINDOW = 60
 
@@ -118,7 +124,7 @@ async def test_command(message: Message):
 
     user_id = message.from_user.id
 
-    # Rate limit
+    # Rate limiting
     if not rate_limit_ok(user_id):
 
         warning = await message.answer(
@@ -143,7 +149,7 @@ async def test_command(message: Message):
     if len(parts) != 2:
 
         response = await message.answer(
-            "❌ Missing hostname.\n\n"
+            "❌ <b>Missing hostname.</b>\n\n"
             "Use:\n"
             "<code>/test google.com</code>",
             parse_mode="HTML",
@@ -174,7 +180,7 @@ async def test_command(message: Message):
 
         result = await test_hostname(hostname)
 
-        # Save result to database
+        # Save the real test result.
         save_result(
             hostname=result["hostname"],
             status=result["status"],
@@ -232,48 +238,51 @@ async def test_command(message: Message):
 @router.callback_query(F.data == "status")
 async def status(callback: CallbackQuery):
 
-    results = get_recent_results(5)
+    rankings = get_top_hostnames(5)
 
-    if not results:
+    text = (
+        "📊 <b>ZED SNI SCANNER</b>\n\n"
+        "🟢 Core bot: Online\n"
+        "🟢 Hostname testing: Available\n"
+        "🟢 Database: Recording results\n\n"
+        "🏆 <b>TOP HOSTNAMES</b>\n\n"
+    )
 
-        text = (
-            "📊 <b>Scanner Status</b>\n\n"
-            "🟢 Core bot: Online\n"
-            "🟢 Hostname testing: Available\n"
-            "🟢 Database: Ready\n\n"
-            "No tests have been recorded yet."
+    if not rankings:
+
+        text += (
+            "No test results available yet."
         )
 
     else:
 
-        text = (
-            "📊 <b>Scanner Status</b>\n\n"
-            "🟢 Core bot: Online\n"
-            "🟢 Hostname testing: Available\n"
-            "🟢 Database: Recording results\n\n"
-            "<b>Recent tests:</b>\n"
-        )
+        medals = [
+            "🥇",
+            "🥈",
+            "🥉",
+            "4️⃣",
+            "5️⃣",
+        ]
 
-        for hostname, network, test_status, latency, created_at in results:
+        for index, item in enumerate(rankings):
 
-            icon = {
-                "ACTIVE": "🟢",
-                "UNSTABLE": "🟡",
-                "DEAD": "🔴",
-            }.get(
-                test_status,
-                "⚪",
-            )
+            medal = medals[index]
 
-            latency_text = (
-                f"{latency}ms"
-                if latency is not None
+            latency = (
+                f"{item['average_latency']}ms"
+                if item["average_latency"] is not None
                 else "N/A"
             )
 
             text += (
-                f"{icon} <code>{hostname}</code>"
-                f" · {latency_text}\n"
+                f"{medal} "
+                f"<code>{item['hostname']}</code>\n"
+                f"   🟢 Success: "
+                f"{item['success_rate']}%\n"
+                f"   ⚡ Avg latency: "
+                f"{latency}\n"
+                f"   🧪 Tests: "
+                f"{item['total_tests']}\n\n"
             )
 
     await callback.message.edit_text(
