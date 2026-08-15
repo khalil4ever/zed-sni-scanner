@@ -42,6 +42,28 @@ def init_db():
         """
     )
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS monitored_hosts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hostname TEXT NOT NULL UNIQUE,
+            network TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            last_status TEXT,
+            last_latency_ms INTEGER,
+            last_checked_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_monitored_enabled
+        ON monitored_hosts(enabled)
+        """
+    )
+
     conn.commit()
     conn.close()
 
@@ -119,7 +141,13 @@ def get_hostname_stats(hostname: str):
         """
         SELECT
             COUNT(*),
-            SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END),
+            SUM(
+                CASE
+                    WHEN status = 'ACTIVE'
+                    THEN 1
+                    ELSE 0
+                END
+            ),
             AVG(latency_ms)
         FROM test_results
         WHERE hostname = ?
@@ -150,6 +178,8 @@ def get_hostname_stats(hostname: str):
             else None
         ),
     }
+
+
 def get_top_hostnames(limit: int = 10):
     conn = get_connection()
 
@@ -160,7 +190,8 @@ def get_top_hostnames(limit: int = 10):
             COUNT(*) AS total_tests,
             SUM(
                 CASE
-                    WHEN status = 'ACTIVE' THEN 1
+                    WHEN status = 'ACTIVE'
+                    THEN 1
                     ELSE 0
                 END
             ) AS successful_tests,
@@ -182,6 +213,7 @@ def get_top_hostnames(limit: int = 10):
     rankings = []
 
     for hostname, total, successful, average_latency in rows:
+
         success_rate = (
             (successful / total) * 100
             if total
@@ -203,3 +235,139 @@ def get_top_hostnames(limit: int = 10):
         )
 
     return rankings
+
+
+def add_monitored_host(
+    hostname: str,
+    network: Optional[str] = None,
+):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO monitored_hosts (
+            hostname,
+            network,
+            enabled
+        )
+        VALUES (?, ?, 1)
+        """,
+        (
+            hostname,
+            network,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def remove_monitored_host(hostname: str):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        DELETE FROM monitored_hosts
+        WHERE hostname = ?
+        """,
+        (hostname,),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_monitored_hosts():
+    conn = get_connection()
+
+    cursor = conn.execute(
+        """
+        SELECT
+            id,
+            hostname,
+            network,
+            enabled,
+            last_status,
+            last_latency_ms,
+            last_checked_at
+        FROM monitored_hosts
+        WHERE enabled = 1
+        ORDER BY hostname ASC
+        """
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return rows
+
+
+def update_monitored_host(
+    hostname: str,
+    status: str,
+    latency_ms: Optional[int] = None,
+):
+    conn = get_connection()
+
+    cursor = conn.execute(
+        """
+        SELECT last_status
+        FROM monitored_hosts
+        WHERE hostname = ?
+        """,
+        (hostname,),
+    )
+
+    row = cursor.fetchone()
+
+    previous_status = (
+        row[0]
+        if row
+        else None
+    )
+
+    conn.execute(
+        """
+        UPDATE monitored_hosts
+        SET
+            last_status = ?,
+            last_latency_ms = ?,
+            last_checked_at = CURRENT_TIMESTAMP
+        WHERE hostname = ?
+        """,
+        (
+            status,
+            latency_ms,
+            hostname,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+    return previous_status
+
+
+def get_monitored_host(hostname: str):
+    conn = get_connection()
+
+    cursor = conn.execute(
+        """
+        SELECT
+            id,
+            hostname,
+            network,
+            enabled,
+            last_status,
+            last_latency_ms,
+            last_checked_at
+        FROM monitored_hosts
+        WHERE hostname = ?
+        """,
+        (hostname,),
+    )
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row
