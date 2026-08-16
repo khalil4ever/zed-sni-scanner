@@ -11,11 +11,13 @@ from bot.keyboards import main_menu, network_selection_keyboard
 from scanner.tester import test_hostname
 from database.database import (
     save_result,
-    get_hostname_stats,      # NEW: Imported for the /stats command
+    get_hostname_stats,
     get_top_hostnames,
     add_monitored_host,
     remove_monitored_host,
     get_monitored_hosts,
+    share_community_host,      # NEW: For community sharing
+    get_top_community_hosts,   # NEW: For top community hosts
 )
 
 router = Router()
@@ -69,16 +71,15 @@ async def start(message: Message):
     await message.answer(
         "🇿🇲 <b>Zed SNI Scanner</b>\n\n"
         "Real hostname connectivity diagnostics.\n\n"
-        "🧪 Test a hostname:\n"
-        "<code>/test google.com</code>\n\n"
-        "🔄 Monitor a hostname:\n"
-        "<code>/monitor google.com</code>\n\n"
-        "📋 View monitored hosts:\n"
-        "<code>/monitored</code>\n\n"
-        "🔍 Scan network SNI hosts:\n"
-        "<code>/scan</code>\n\n"
-        "📊 View hostname stats:\n"
-        "<code>/stats google.com</code>\n\n"
+        "🧪 <b>Commands:</b>\n"
+        "/test google.com\n"
+        "/monitor google.com\n"
+        "/monitored\n"
+        "/unmonitor google.com\n"
+        "/scan\n"
+        "/stats google.com\n"
+        "/share zamtel apps.zamtel.co.zm\n"
+        "/top_zm\n\n"
         "Choose an option below:",
         reply_markup=main_menu(),
         parse_mode="HTML",
@@ -100,6 +101,10 @@ async def help_command(message: Message):
         "<code>/scan</code>\n\n"
         "<b>View stats:</b>\n"
         "<code>/stats google.com</code>\n\n"
+        "<b>Share a working host:</b>\n"
+        "<code>/share mtn mtnid.mtn.zm</code>\n\n"
+        "<b>Top community hosts:</b>\n"
+        "<code>/top_zm</code>\n\n"
         "🟢 ACTIVE = Connection successful\n"
         "🟡 UNSTABLE = Partial connection\n"
         "🔴 DEAD = Connection failed\n\n"
@@ -107,7 +112,85 @@ async def help_command(message: Message):
         parse_mode="HTML",
     )
 
-# --- NEW: STATS COMMAND ---
+# --- NEW: SHARE COMMAND ---
+@router.message(Command("share"))
+async def share_command(message: Message):
+    parts = message.text.split(maxsplit=2)
+    if len(parts) != 3:
+        response = await message.answer(
+            "❌ <b>Usage error.</b>\n\n"
+            "Use format:\n"
+            "<code>/share [network] [hostname]</code>\n\n"
+            "Example:\n"
+            "<code>/share mtn mtnid.mtn.zm</code>",
+            parse_mode="HTML",
+        )
+        asyncio.create_task(delete_later(response, 20))
+        return
+
+    network = parts[1].strip().lower()
+    hostname = parts[2].strip()
+
+    allowed_networks = ["mtn", "airtel", "zamtel", "global"]
+    if network not in allowed_networks:
+        response = await message.answer(
+            f"❌ <b>Invalid network.</b>\n\n"
+            f"Allowed networks: mtn, airtel, zamtel, global",
+            parse_mode="HTML",
+        )
+        asyncio.create_task(delete_later(response, 20))
+        return
+
+    user_id = message.from_user.id
+    success = share_community_host(hostname, network, user_id)
+
+    if success:
+        response = await message.answer(
+            f"✅ <b>Host shared successfully!</b>\n\n"
+            f"Network: <b>{network.capitalize()}</b>\n"
+            f"Host: <code>{hostname}</code>\n\n"
+            f"Use <code>/top_zm</code> to see all community-hosted SNI hosts.",
+            parse_mode="HTML",
+        )
+    else:
+        response = await message.answer(
+            f"⚠️ <b>Already shared.</b>\n\n"
+            f"<code>{hostname}</code> has already been shared for {network.capitalize()} by the community.",
+            parse_mode="HTML",
+        )
+    
+    asyncio.create_task(delete_later(response, 20))
+
+# --- NEW: TOP_ZM COMMAND ---
+@router.message(Command("top_zm"))
+async def top_zm_command(message: Message):
+    top_hosts = get_top_community_hosts(5)
+
+    if not top_hosts:
+        response = await message.answer(
+            "📭 <b>No community hosts yet.</b>\n\n"
+            "Be the first to share a working SNI host!\n"
+            "Use: <code>/share mtn mtnid.mtn.zm</code>",
+            parse_mode="HTML",
+        )
+        asyncio.create_task(delete_later(response, 20))
+        return
+
+    text = "🏆 <b>TOP COMMUNITY VERIFIED HOSTS</b>\n\n"
+    
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    for index, item in enumerate(top_hosts):
+        medal = medals[index] if index < 5 else f"{index+1}."
+        text += (
+            f"{medal} <code>{item['hostname']}</code>\n"
+            f"   📱 Network: <b>{item['network'].capitalize()}</b>\n"
+            f"   👥 Shares: {item['share_count']}\n"
+            f"   🕒 Last shared: {item['last_shared_at']}\n\n"
+        )
+
+    response = await message.answer(text, parse_mode="HTML")
+    asyncio.create_task(delete_later(response, 30))
+
 @router.message(Command("stats"))
 async def stats_command(message: Message):
     parts = message.text.split(maxsplit=1)
@@ -134,12 +217,10 @@ async def stats_command(message: Message):
         asyncio.create_task(delete_later(response, 20))
         return
 
-    # Format the latency values
     avg_lat = f"{stats['avg_latency']} ms" if stats['avg_latency'] else "N/A"
     best_lat = f"{stats['best_latency']} ms" if stats['best_latency'] else "N/A"
     worst_lat = f"{stats['worst_latency']} ms" if stats['worst_latency'] else "N/A"
 
-    # Determine emoji for uptime
     uptime_emoji = "🟢" if stats['uptime_percent'] >= 95 else "🟡" if stats['uptime_percent'] >= 70 else "🔴"
 
     text = (
@@ -504,28 +585,4 @@ async def scan_custom_prompt(callback: CallbackQuery):
         "Please type the hostnames you want to test (one per line, or separated by spaces/commas).\n\n"
         "Example:\n"
         "<code>myvpn.com api.mysite.com</code>\n\n"
-        "Send your list as a message now.",
-        parse_mode="HTML",
-    )
-    user_custom_scan[callback.from_user.id] = True
-
-@router.message(F.text)
-async def handle_custom_hostname(message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_custom_scan:
-        return
-
-    del user_custom_scan[user_id]
-
-    raw_text = message.text.strip()
-    hostnames = [h.strip() for h in re.split(r'[\n\s,]+', raw_text) if h.strip()]
-
-    if not hostnames:
-        await message.answer("❌ No valid hostnames provided. Please try again.", parse_mode="HTML")
-        return
-
-    if len(hostnames) > 20:
-        await message.answer("⚠️ Too many hostnames! Please limit to 20 or fewer.", parse_mode="HTML")
-        return
-
-    asyncio.create_task(run_network_scan(message, "Custom Network", hostnames))
+        "Se
