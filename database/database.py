@@ -2,7 +2,6 @@ import sqlite3
 import os
 
 # Database file path (default to local)
-# IMPORTANT: If you set up a Railway Volume later, change this to /data/zed_sni.db
 DB_PATH = "zed_sni.db"
 
 def init_db():
@@ -40,11 +39,22 @@ def init_db():
     )
     """)
 
+    # --- NEW: Table for Community Verified Hosts ---
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS community_hosts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hostname TEXT NOT NULL,
+        network TEXT NOT NULL,
+        shared_by_user_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(hostname, network)
+    )
+    """)
+
     conn.commit()
     conn.close()
 
 def save_result(hostname, status, dns, tcp, tls, https, latency_ms, network="Global"):
-    """Saves a single test result to the database."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
@@ -55,7 +65,6 @@ def save_result(hostname, status, dns, tcp, tls, https, latency_ms, network="Glo
     conn.close()
 
 def get_recent_results(hostname, limit=10):
-    """Retrieves the most recent test results for a hostname."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -67,18 +76,10 @@ def get_recent_results(hostname, limit=10):
     conn.close()
     return [dict(row) for row in rows]
 
-# NEW FUNCTION FOR THE /stats COMMAND
 def get_hostname_stats(hostname):
-    """
-    Calculates detailed historical stats for a single hostname.
-    Returns a dictionary with total tests, uptime %, average latency, etc.
-    Returns None if the hostname has never been tested.
-    """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-
-    # 1. Total tests
     cursor.execute("SELECT COUNT(*) as total FROM test_results WHERE hostname = ?", (hostname,))
     total_tests = cursor.fetchone()["total"]
     
@@ -86,11 +87,9 @@ def get_hostname_stats(hostname):
         conn.close()
         return None
 
-    # 2. Active tests
     cursor.execute("SELECT COUNT(*) as active FROM test_results WHERE hostname = ? AND status = 'ACTIVE'", (hostname,))
     active_tests = cursor.fetchone()["active"]
 
-    # 3. Latency stats (ignore NULL latency values)
     cursor.execute("SELECT AVG(latency_ms) as avg_latency FROM test_results WHERE hostname = ? AND latency_ms IS NOT NULL", (hostname,))
     avg_latency = cursor.fetchone()["avg_latency"]
     cursor.execute("SELECT MIN(latency_ms) as best_latency FROM test_results WHERE hostname = ? AND latency_ms IS NOT NULL", (hostname,))
@@ -98,13 +97,11 @@ def get_hostname_stats(hostname):
     cursor.execute("SELECT MAX(latency_ms) as worst_latency FROM test_results WHERE hostname = ? AND latency_ms IS NOT NULL", (hostname,))
     worst_latency = cursor.fetchone()["worst_latency"]
 
-    # 4. Last checked timestamp
     cursor.execute("SELECT timestamp FROM test_results WHERE hostname = ? ORDER BY timestamp DESC LIMIT 1", (hostname,))
     last_check_row = cursor.fetchone()
     last_check = last_check_row["timestamp"] if last_check_row else None
 
     conn.close()
-
     return {
         "hostname": hostname,
         "total_tests": total_tests,
@@ -117,7 +114,6 @@ def get_hostname_stats(hostname):
     }
 
 def get_top_hostnames(limit=5):
-    """Retrieves the most tested hostnames with their success rate and average latency."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -137,7 +133,6 @@ def get_top_hostnames(limit=5):
     return [dict(row) for row in rows]
 
 def add_monitored_host(hostname, network="Global"):
-    """Adds a hostname to the monitoring table."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
@@ -148,13 +143,11 @@ def add_monitored_host(hostname, network="Global"):
         conn.commit()
         return True
     except sqlite3.IntegrityError:
-        # Hostname already exists in monitoring
         return False
     finally:
         conn.close()
 
 def remove_monitored_host(hostname):
-    """Removes a hostname from the monitoring table."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM monitored_hosts WHERE hostname = ?", (hostname,))
@@ -162,7 +155,6 @@ def remove_monitored_host(hostname):
     conn.close()
 
 def get_monitored_hosts():
-    """Retrieves all monitored hosts."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -171,9 +163,7 @@ def get_monitored_hosts():
     conn.close()
     return [tuple(row) for row in rows]
 
-# --- FIX: RENAMED THIS TO MATCH WHAT 'monitor.py' EXPECTS ---
 def update_monitored_host(hostname, status, latency_ms):
-    """Updates the last status and latency of a monitored host."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
@@ -185,7 +175,6 @@ def update_monitored_host(hostname, status, latency_ms):
     conn.close()
 
 def get_monitored_host(hostname):
-    """Retrieves a single monitored host's details."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -193,3 +182,41 @@ def get_monitored_host(hostname):
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+# --- NEW: Community Host Functions ---
+
+def share_community_host(hostname, network, user_id):
+    """Adds a verified host to the community database."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+        INSERT INTO community_hosts (hostname, network, shared_by_user_id)
+        VALUES (?, ?, ?)
+        """, (hostname, network, user_id))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False  # Already shared
+    finally:
+        conn.close()
+
+def get_top_community_hosts(limit=5):
+    """Retrieves the most frequently shared community hostnames."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT 
+        hostname,
+        network,
+        COUNT(*) as share_count,
+        MAX(created_at) as last_shared_at
+    FROM community_hosts
+    GROUP BY hostname, network
+    ORDER BY share_count DESC
+    LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
