@@ -12,14 +12,19 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONITOR_CHANNEL_ID = os.getenv("MONITOR_CHANNEL_ID")
 CHECK_INTERVAL = 300  # 5 minutes
 
-async def monitor_hosts():
+async def monitor_hosts(bot=None, channel_id=None):
     """
     Background worker that runs every 5 minutes.
-    Tests monitored hosts and sends alerts to a Telegram channel 
-    if a host goes down or comes back online.
+    Accepts a bot and channel_id (or uses environment variables).
+    Tests monitored hosts and sends alerts if status changes.
     """
-    # Initialize bot locally to avoid interrupting main polling
-    bot = Bot(token=BOT_TOKEN)
+    # Use passed bot, or create a new one if none was passed
+    if bot is None:
+        bot = Bot(token=BOT_TOKEN)
+    
+    # Use passed channel_id, or fallback to env variable
+    if channel_id is None:
+        channel_id = MONITOR_CHANNEL_ID
 
     while True:
         try:
@@ -42,8 +47,8 @@ async def monitor_hosts():
                     update_monitored_host(hostname, new_status, new_latency)
 
                     # --- ALERT LOGIC ---
-                    # Only trigger alerts if a channel ID is configured and the status actually changed
-                    if MONITOR_CHANNEL_ID and last_status != new_status:
+                    # Only trigger alerts if a channel ID exists and the status actually changed
+                    if channel_id and last_status != new_status:
                         message = None
                         
                         if new_status in ["DEAD", "ERROR"] and last_status not in ["DEAD", "ERROR"]:
@@ -65,7 +70,7 @@ async def monitor_hosts():
 
                         if message:
                             try:
-                                await bot.send_message(chat_id=MONITOR_CHANNEL_ID, text=message, parse_mode="HTML")
+                                await bot.send_message(chat_id=channel_id, text=message, parse_mode="HTML")
                             except Exception as e:
                                 print(f"Failed to send alert for {hostname}: {e}")
 
