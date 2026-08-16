@@ -1,142 +1,91 @@
-import asyncio
 import socket
 import ssl
+import asyncio
 import time
-from urllib.parse import urlparse
 
-TIMEOUT = 6
-
-
-async def _dns(hostname):
+async def test_tcp_connection(hostname, port, timeout=3):
+    """Tests a TCP connection to a specific port."""
     try:
-        infos = await asyncio.get_running_loop().run_in_executor(
-            None,
-            lambda: socket.getaddrinfo(
-                hostname,
-                443,
-                type=socket.SOCK_STREAM
-            )
-        )
-        return bool(infos)
-    except Exception:
-        return False
-
-
-async def _tls(hostname):
-    def check():
-        context = ssl.create_default_context()
-
-        with socket.create_connection(
-            (hostname, 443),
-            timeout=TIMEOUT
-        ) as sock:
-            with context.wrap_socket(
-                sock,
-                server_hostname=hostname
-            ) as tls_sock:
-                return tls_sock.version() is not None
-
-    try:
-        await asyncio.get_running_loop().run_in_executor(
-            None,
-            check
-        )
-        return True
-    except Exception:
-        return False
-
-
-async def _https(hostname):
-    def check():
-        import http.client
-
-        started = time.perf_counter()
-
-        conn = http.client.HTTPSConnection(
-            hostname,
-            443,
-            timeout=TIMEOUT
-        )
-
-        try:
-            conn.request(
-                "HEAD",
-                "/",
-                headers={
-                    "User-Agent": "Zed-SNI-Scanner/1.0"
-                }
-            )
-
-            response = conn.getresponse()
-
-            latency = round(
-                (time.perf_counter() - started) * 1000
-            )
-
-            return response.status < 600, latency
-
-        finally:
-            conn.close()
-
-    try:
-        return await asyncio.get_running_loop().run_in_executor(
-            None,
-            check
-        )
+        loop = asyncio.get_running_loop()
+        start = time.time()
+        # Uses a thread pool to run blocking socket operations safely
+        await loop.run_in_executor(None, lambda: socket.create_connection((hostname, port), timeout))
+        latency = round((time.time() - start) * 1000, 2)
+        return True, latency
     except Exception:
         return False, None
 
+async def test_tls_sni(hostname, port, timeout=3):
+    """Tests if a TLS/SNI handshake succeeds on a specific port."""
+    try:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        
+        loop = asyncio.get_running_loop()
+        start = time.time()
+        
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        
+        # Connect
+        await loop.run_in_executor(None, sock.connect, (hostname, port))
+        # Perform TLS Handshake
+        ssl_sock = context.wrap_socket(sock, server_hostname=hostname)
+        await loop.run_in_executor(None, ssl_sock.do_handshake)
+        
+        ssl_sock.close()
+        latency = round((time.time() - start) * 1000, 2)
+        return True, latency
+    except Exception:
+        return False, None
 
-async def test_hostname(hostname: str):
-    hostname = hostname.strip().lower()
+async def test_hostname(hostname):
+    """Standard test (DNS, TCP 443, TLS 443, HTTPS 443). Used for /test and /monitor."""
+    dns_ok = True
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: socket.gethostbyname(hostname))
+    except:
+        dns_ok = False
 
-    if "://" in hostname:
-        hostname = urlparse(hostname).hostname or hostname
+    tcp_ok, tcp_lat = await test_tcp_connection(hostname, 443)
+    tls_ok, tls_lat = await test_tls_sni(hostname, 443)
+    https_ok = tcp_ok and tls_ok
 
-    dns_ok = await _dns(hostname)
-
-    tcp_ok = False
-    tls_ok = False
-
-    if dns_ok:
-        try:
-            await asyncio.get_running_loop().run_in_executor(
-                None,
-                lambda: socket.create_connection(
-                    (hostname, 443),
-                    timeout=TIMEOUT
-                ).close()
-            )
-            tcp_ok = True
-        except Exception:
-            tcp_ok = False
-
-    if tcp_ok:
-        tls_ok = await _tls(hostname)
-
-    https_ok = False
-    latency = None
-
-    if tls_ok:
-        https_ok, latency = await _https(hostname)
-
-    if https_ok:
+    status = "ERROR"
+    if dns_ok and tcp_ok and tls_ok and https_ok:
         status = "ACTIVE"
-        detail = "TLS and HTTPS connectivity succeeded."
-    elif tls_ok:
+        latency = tls_lat
+    elif dns_ok and tcp_ok and not tls_ok:
         status = "UNSTABLE"
-        detail = "TLS succeeded but HTTPS did not complete normally."
-    else:
+        latency = tcp_lat
+    elif dns_ok and not tcp_ok:
         status = "DEAD"
-        detail = "The hostname did not pass the required connectivity checks."
+        latency = None
+    else:
+        status = "ERROR"
+        latency = None
 
     return {
         "hostname": hostname,
+        "status": status,
         "dns": dns_ok,
         "tcp": tcp_ok,
         "tls": tls_ok,
         "https": https_ok,
-        "latency_ms": latency if latency is not None else "N/A",
-        "status": status,
-        "detail": detail,
+        "latency_ms": latency,
     }
+
+async def scan_multiport(hostname, ports=[80, 443, 8080, 8443, 3128]):
+    """Scans multiple ports for connectivity and TLS/SNI support."""
+    results = []
+    for port in ports:
+        tcp_ok, tcp_lat = await test_tcp_connection(hostname, port)
+        if tcp_ok:
+            tls_ok, tls_lat = await test_tls_sni(hostname, port)
+            if tls_ok:
+                results.append({"port": port, "type": "TLS/SNI", "latency": tls_lat, "active": True})
+            else:
+                results.append({"port": port, "type": "TCP-Only", "latency": tcp_lat, "active": True})
+    return results
