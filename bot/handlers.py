@@ -27,19 +27,22 @@ user_tests = defaultdict(list)
 # Custom scan state tracking
 user_custom_scan = {}
 
-# Predefined hostnames for Zambian networks (you can edit these anytime)
+# --- UPDATED: REAL ZAMBIAN NETWORK HOSTNAMES ---
 NETWORK_HOSTNAMES = {
     "mtn": [
-        "google.com", "mtn.co.zm", "facebook.com", "youtube.com", 
-        "whatsapp.com", "instagram.com", "tiktok.com", "twitter.com"
+        "mtnid.mtn.zm", 
+        "imbankgroup.com", 
+        "m.drct.me"
     ],
     "airtel": [
-        "google.com", "airtel.co.zm", "facebook.com", "youtube.com", 
-        "whatsapp.com", "instagram.com", "tiktok.com", "twitter.com"
+        # You haven't found Airtel hosts yet. 
+        # Replace these placeholders with real Airtel domains when you find them.
+        "google.com", "airtel.co.zm"
     ],
     "zamtel": [
-        "google.com", "zamtel.co.zm", "facebook.com", "youtube.com", 
-        "whatsapp.com", "instagram.com", "tiktok.com", "twitter.com"
+        "apps.zamtel.co.zm", 
+        "prod.zamtelkwacha.co.zm", 
+        "pprod.zamtelkwacha.co.zm"
     ],
 }
 
@@ -55,7 +58,6 @@ def rate_limit_ok(user_id: int) -> bool:
     user_tests[user_id].append(now)
     return True
 
-# --- UPDATED TO 20 SECONDS ---
 async def delete_later(message: Message, delay: int = 20):
     await asyncio.sleep(delay)
     try:
@@ -65,7 +67,6 @@ async def delete_later(message: Message, delay: int = 20):
 
 @router.message(CommandStart())
 async def start(message: Message):
-    # Menu message is NOT deleted so the buttons remain clickable
     await message.answer(
         "🇿🇲 <b>Zed SNI Scanner</b>\n\n"
         "Real hostname connectivity diagnostics.\n\n"
@@ -84,7 +85,6 @@ async def start(message: Message):
 
 @router.message(Command("help"))
 async def help_command(message: Message):
-    # Help message is NOT deleted because it doesn't have buttons, user can keep it
     await message.answer(
         "🧪 <b>How to use Zed SNI Scanner</b>\n\n"
         "<b>Test:</b>\n"
@@ -114,7 +114,7 @@ async def monitor_command(message: Message):
             "<code>/monitor google.com</code>",
             parse_mode="HTML",
         )
-        asyncio.create_task(delete_later(response, 20)) # Deleted in 20s
+        asyncio.create_task(delete_later(response, 20))
         return
 
     hostname = parts[1].strip()
@@ -125,7 +125,7 @@ async def monitor_command(message: Message):
             "<code>/monitor google.com</code>",
             parse_mode="HTML",
         )
-        asyncio.create_task(delete_later(response, 20)) # Deleted in 20s
+        asyncio.create_task(delete_later(response, 20))
         return
 
     status_message = await message.answer(
@@ -170,7 +170,7 @@ async def monitor_command(message: Message):
             parse_mode="HTML",
         )
 
-    asyncio.create_task(delete_later(status_message, 20)) # Deleted in 20s
+    asyncio.create_task(delete_later(status_message, 20))
 
 @router.message(Command("unmonitor"))
 async def unmonitor_command(message: Message):
@@ -266,7 +266,7 @@ async def test_command(message: Message):
             "5 tests per minute.",
             parse_mode="HTML",
         )
-        asyncio.create_task(delete_later(message, 20)) # User command deleted
+        asyncio.create_task(delete_later(message, 20))
         asyncio.create_task(delete_later(warning, 20))
         return
 
@@ -287,7 +287,7 @@ async def test_command(message: Message):
         f"🔎 Testing <code>{hostname}</code>...",
         parse_mode="HTML",
     )
-    asyncio.create_task(delete_later(message, 20)) # User command deleted
+    asyncio.create_task(delete_later(message, 20))
 
     try:
         result = await test_hostname(hostname)
@@ -363,7 +363,6 @@ async def status(callback: CallbackQuery):
 
 @router.message(Command("scan"))
 async def scan_command(message: Message):
-    # Menu message is NOT deleted so the buttons remain clickable
     await message.answer(
         "🇿🇲 <b>Select a Zambian network to scan for active SNI hosts:</b>",
         reply_markup=network_selection_keyboard(),
@@ -425,8 +424,6 @@ async def run_network_scan(message: Message, network_label: str, hostnames: list
     text += f"🟢 Active: {len(working_hosts)}"
 
     await status_msg.edit_text(text, parse_mode="HTML")
-    
-    # Auto-delete the final scan results after 20 seconds to keep the chat clean
     asyncio.create_task(delete_later(status_msg, 20))
 
 @router.callback_query(F.data == "scan_mtn")
