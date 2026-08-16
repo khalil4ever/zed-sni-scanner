@@ -1,136 +1,82 @@
 import asyncio
-
-from scanner.tester import test_hostname
+import os
+from aiogram import Bot
 from database.database import (
     get_monitored_hosts,
     update_monitored_host,
-    save_result,
 )
+from scanner.tester import test_hostname
 
-
+# Environment variables
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+MONITOR_CHANNEL_ID = os.getenv("MONITOR_CHANNEL_ID")
 CHECK_INTERVAL = 300  # 5 minutes
 
-
-async def monitor_hosts(bot=None, channel_id=None):
+async def monitor_hosts():
+    """
+    Background worker that runs every 5 minutes.
+    Tests monitored hosts and sends alerts to a Telegram channel 
+    if a host goes down or comes back online.
+    """
+    # Initialize bot locally to avoid interrupting main polling
+    bot = Bot(token=BOT_TOKEN)
 
     while True:
-
         try:
-
             hosts = get_monitored_hosts()
-
-            for row in hosts:
-
-                (
-                    host_id,
-                    hostname,
-                    network,
-                    enabled,
-                    previous_status,
-                    previous_latency,
-                    last_checked,
-                ) = row
+            
+            for host_row in hosts:
+                # Unpack the row: (id, hostname, network, enabled, last_status, last_latency, last_checked)
+                host_id, hostname, network, enabled, last_status, last_latency_ms, last_checked_at = host_row
 
                 if not enabled:
                     continue
 
                 try:
-
+                    # Test the hostname live
                     result = await test_hostname(hostname)
+                    new_status = result["status"]
+                    new_latency = result["latency_ms"]
+                    
+                    # Always update the database with the latest result
+                    update_monitored_host(hostname, new_status, new_latency)
 
-                    current_status = result["status"]
-
-                    latency = result["latency_ms"]
-
-                    if not isinstance(latency, int):
-                        latency = None
-
-                    # Save monitoring result.
-                    save_result(
-                        hostname=result["hostname"],
-                        status=current_status,
-                        dns=result["dns"],
-                        tcp=result["tcp"],
-                        tls=result["tls"],
-                        https=result["https"],
-                        latency_ms=latency,
-                        network=network,
-                    )
-
-                    old_status = update_monitored_host(
-                        hostname=hostname,
-                        status=current_status,
-                        latency_ms=latency,
-                    )
-
-                    # Notify only when the status changes.
-                    if (
-                        bot is not None
-                        and channel_id is not None
-                        and old_status is not None
-                        and old_status != current_status
-                    ):
-
-                        if current_status == "ACTIVE":
-
+                    # --- ALERT LOGIC ---
+                    # Only trigger alerts if a channel ID is configured and the status actually changed
+                    if MONITOR_CHANNEL_ID and last_status != new_status:
+                        message = None
+                        
+                        if new_status in ["DEAD", "ERROR"] and last_status not in ["DEAD", "ERROR"]:
+                            # Host just went DOWN
                             message = (
-                                "🟢 <b>HOSTNAME RESTORED</b>\n\n"
-                                f"🌐 <code>{hostname}</code>\n"
-                                f"Network: {network or 'General'}\n\n"
-                                f"Status: 🟢 ACTIVE\n"
-                                f"Latency: {latency or 'N/A'} ms"
+                                f"🔴 <b>HOSTNAME DOWN</b>\n\n"
+                                f"🌐 {hostname}\n"
+                                f"❌ Status: {new_status}\n"
+                                f"⚡ Previous: {last_status or 'Unknown'}"
                             )
-
-                        elif (
-                            current_status == "DEAD"
-                            and old_status == "ACTIVE"
-                        ):
-
+                        elif new_status == "ACTIVE" and last_status not in ["ACTIVE", None]:
+                            # Host just came BACK UP
                             message = (
-                                "🚨 <b>HOSTNAME DOWN</b>\n\n"
-                                f"🌐 <code>{hostname}</code>\n"
-                                f"Network: {network or 'General'}\n\n"
-                                "Previous: 🟢 ACTIVE\n"
-                                "Current: 🔴 DEAD"
+                                f"🟢 <b>HOSTNAME RESTORED</b>\n\n"
+                                f"🌐 {hostname}\n"
+                                f"✅ Status: {new_status}\n"
+                                f"⚡ Latency: {new_latency} ms"
                             )
 
-                        else:
+                        if message:
+                            try:
+                                await bot.send_message(chat_id=MONITOR_CHANNEL_ID, text=message, parse_mode="HTML")
+                            except Exception as e:
+                                print(f"Failed to send alert for {hostname}: {e}")
 
-                            message = (
-                                "🔄 <b>HOSTNAME STATUS CHANGED</b>\n\n"
-                                f"🌐 <code>{hostname}</code>\n"
-                                f"Network: {network or 'General'}\n\n"
-                                f"Previous: {old_status}\n"
-                                f"Current: {current_status}"
-                            )
+                except Exception as e:
+                    print(f"Monitoring error for {hostname}: {e}")
 
-                        try:
+                # Small delay between checking hosts to prevent rate limits
+                await asyncio.sleep(1)
 
-                            await bot.send_message(
-                                chat_id=channel_id,
-                                text=message,
-                                parse_mode="HTML",
-                            )
+        except Exception as e:
+            print(f"Monitor loop error: {e}")
 
-                        except Exception as notification_error:
-
-                            print(
-                                "Notification error:",
-                                notification_error,
-                            )
-
-                except Exception as test_error:
-
-                    print(
-                        f"Monitor test error for "
-                        f"{hostname}: {test_error}"
-                    )
-
-        except Exception as monitor_error:
-
-            print(
-                "Monitoring loop error:",
-                monitor_error,
-            )
-
+        # Wait 5 minutes before the next full scan
         await asyncio.sleep(CHECK_INTERVAL)
