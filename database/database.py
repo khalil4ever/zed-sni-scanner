@@ -67,7 +67,7 @@ def get_recent_results(hostname, limit=10):
     conn.close()
     return [dict(row) for row in rows]
 
-# --- NEW FUNCTION FOR UPGRADE #1 ---
+# NEW FUNCTION FOR THE /stats COMMAND
 def get_hostname_stats(hostname):
     """
     Calculates detailed historical stats for a single hostname.
@@ -171,7 +171,8 @@ def get_monitored_hosts():
     conn.close()
     return [tuple(row) for row in rows]
 
-def update_monitored_host_status(hostname, status, latency_ms):
+# --- FIX: RENAMED THIS TO MATCH WHAT 'monitor.py' EXPECTS ---
+def update_monitored_host(hostname, status, latency_ms):
     """Updates the last status and latency of a monitored host."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
