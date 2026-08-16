@@ -11,6 +11,7 @@ from bot.keyboards import main_menu, network_selection_keyboard
 from scanner.tester import test_hostname
 from database.database import (
     save_result,
+    get_hostname_stats,      # NEW: Imported for the /stats command
     get_top_hostnames,
     add_monitored_host,
     remove_monitored_host,
@@ -27,7 +28,7 @@ user_tests = defaultdict(list)
 # Custom scan state tracking
 user_custom_scan = {}
 
-# --- UPDATED: REAL ZAMBIAN NETWORK HOSTNAMES ---
+# Real Zambian network hostnames
 NETWORK_HOSTNAMES = {
     "mtn": [
         "mtnid.mtn.zm", 
@@ -35,8 +36,6 @@ NETWORK_HOSTNAMES = {
         "m.drct.me"
     ],
     "airtel": [
-        # You haven't found Airtel hosts yet. 
-        # Replace these placeholders with real Airtel domains when you find them.
         "google.com", "airtel.co.zm"
     ],
     "zamtel": [
@@ -78,6 +77,8 @@ async def start(message: Message):
         "<code>/monitored</code>\n\n"
         "🔍 Scan network SNI hosts:\n"
         "<code>/scan</code>\n\n"
+        "📊 View hostname stats:\n"
+        "<code>/stats google.com</code>\n\n"
         "Choose an option below:",
         reply_markup=main_menu(),
         parse_mode="HTML",
@@ -97,12 +98,63 @@ async def help_command(message: Message):
         "<code>/unmonitor google.com</code>\n\n"
         "<b>Scan network:</b>\n"
         "<code>/scan</code>\n\n"
+        "<b>View stats:</b>\n"
+        "<code>/stats google.com</code>\n\n"
         "🟢 ACTIVE = Connection successful\n"
         "🟡 UNSTABLE = Partial connection\n"
         "🔴 DEAD = Connection failed\n\n"
         "⏱️ Manual test limit: 5 tests per user every 60 seconds.",
         parse_mode="HTML",
     )
+
+# --- NEW: STATS COMMAND ---
+@router.message(Command("stats"))
+async def stats_command(message: Message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) != 2:
+        response = await message.answer(
+            "❌ <b>Missing hostname.</b>\n\n"
+            "Use:\n"
+            "<code>/stats google.com</code>",
+            parse_mode="HTML",
+        )
+        asyncio.create_task(delete_later(response, 20))
+        return
+
+    hostname = parts[1].strip()
+    stats = get_hostname_stats(hostname)
+
+    if stats is None:
+        response = await message.answer(
+            f"📊 <b>No data for {hostname}</b>\n\n"
+            "This hostname has never been tested by the bot.\n"
+            "Use <code>/test {hostname}</code> to start collecting data.",
+            parse_mode="HTML",
+        )
+        asyncio.create_task(delete_later(response, 20))
+        return
+
+    # Format the latency values
+    avg_lat = f"{stats['avg_latency']} ms" if stats['avg_latency'] else "N/A"
+    best_lat = f"{stats['best_latency']} ms" if stats['best_latency'] else "N/A"
+    worst_lat = f"{stats['worst_latency']} ms" if stats['worst_latency'] else "N/A"
+
+    # Determine emoji for uptime
+    uptime_emoji = "🟢" if stats['uptime_percent'] >= 95 else "🟡" if stats['uptime_percent'] >= 70 else "🔴"
+
+    text = (
+        f"📊 <b>Stats for {hostname}</b>\n\n"
+        f"{uptime_emoji} Uptime: <b>{stats['uptime_percent']}%</b>\n"
+        f"🧪 Total tests: {stats['total_tests']}\n"
+        f"✅ Active tests: {stats['active_tests']}\n\n"
+        f"⚡ Average latency: <b>{avg_lat}</b>\n"
+        f"🚀 Best latency: {best_lat}\n"
+        f"🐌 Worst latency: {worst_lat}\n\n"
+        f"🕒 Last checked: {stats['last_check']}"
+    )
+
+    response = await message.answer(text, parse_mode="HTML")
+    asyncio.create_task(delete_later(response, 30))
 
 @router.message(Command("monitor"))
 async def monitor_command(message: Message):
