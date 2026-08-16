@@ -22,15 +22,11 @@ from database.database import (
 
 router = Router()
 
-# Rate limiting configuration
 RATE_LIMIT = 5
 RATE_WINDOW = 60
 user_tests = defaultdict(list)
-
-# Custom scan state tracking
 user_custom_scan = {}
 
-# Real Zambian network hostnames
 NETWORK_HOSTNAMES = {
     "mtn": ["mtnid.mtn.zm", "imbankgroup.com", "m.drct.me"],
     "airtel": ["google.com", "airtel.co.zm"],
@@ -39,10 +35,7 @@ NETWORK_HOSTNAMES = {
 
 def rate_limit_ok(user_id: int) -> bool:
     now = time.time()
-    user_tests[user_id] = [
-        timestamp for timestamp in user_tests[user_id]
-        if now - timestamp < RATE_WINDOW
-    ]
+    user_tests[user_id] = [t for t in user_tests[user_id] if now - t < RATE_WINDOW]
     if len(user_tests[user_id]) >= RATE_LIMIT:
         return False
     user_tests[user_id].append(now)
@@ -109,8 +102,7 @@ async def share_command(message: Message):
     network = parts[1].strip().lower()
     hostname = parts[2].strip()
 
-    allowed_networks = ["mtn", "airtel", "zamtel", "global"]
-    if network not in allowed_networks:
+    if network not in ["mtn", "airtel", "zamtel", "global"]:
         response = await message.answer(
             f"❌ <b>Invalid network.</b>\n\nAllowed networks: mtn, airtel, zamtel, global",
             parse_mode="HTML",
@@ -118,8 +110,7 @@ async def share_command(message: Message):
         asyncio.create_task(delete_later(response, 20))
         return
 
-    user_id = message.from_user.id
-    success = share_community_host(hostname, network, user_id)
+    success = share_community_host(hostname, network, message.from_user.id)
 
     if success:
         response = await message.answer(
@@ -132,16 +123,14 @@ async def share_command(message: Message):
     else:
         response = await message.answer(
             f"⚠️ <b>Already shared.</b>\n\n"
-            f"<code>{hostname}</code> has already been shared for {network.capitalize()} by the community.",
+            f"<code>{hostname}</code> has already been shared for {network.capitalize()}.",
             parse_mode="HTML",
         )
-    
     asyncio.create_task(delete_later(response, 20))
 
 @router.message(Command("top_zm"))
 async def top_zm_command(message: Message):
     top_hosts = get_top_community_hosts(5)
-
     if not top_hosts:
         response = await message.answer(
             "📭 <b>No community hosts yet.</b>\n\n"
@@ -154,7 +143,6 @@ async def top_zm_command(message: Message):
 
     text = "🏆 <b>TOP COMMUNITY VERIFIED HOSTS</b>\n\n"
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-    
     for index, item in enumerate(top_hosts):
         medal = medals[index] if index < 5 else f"{index+1}."
         text += f"{medal} <code>{item['hostname']}</code>\n"
@@ -182,7 +170,6 @@ async def stats_command(message: Message):
     if stats is None:
         response = await message.answer(
             f"📊 <b>No data for {hostname}</b>\n\n"
-            f"This hostname has never been tested by the bot.\n"
             f"Use <code>/test {hostname}</code> to start collecting data.",
             parse_mode="HTML",
         )
@@ -192,12 +179,11 @@ async def stats_command(message: Message):
     avg_lat = f"{stats['avg_latency']} ms" if stats['avg_latency'] else "N/A"
     best_lat = f"{stats['best_latency']} ms" if stats['best_latency'] else "N/A"
     worst_lat = f"{stats['worst_latency']} ms" if stats['worst_latency'] else "N/A"
-
-    uptime_emoji = "🟢" if stats['uptime_percent'] >= 95 else "🟡" if stats['uptime_percent'] >= 70 else "🔴"
+    emoji = "🟢" if stats['uptime_percent'] >= 95 else "🟡" if stats['uptime_percent'] >= 70 else "🔴"
 
     text = (
         f"📊 <b>Stats for {hostname}</b>\n\n"
-        f"{uptime_emoji} Uptime: <b>{stats['uptime_percent']}%</b>\n"
+        f"{emoji} Uptime: <b>{stats['uptime_percent']}%</b>\n"
         f"🧪 Total tests: {stats['total_tests']}\n"
         f"✅ Active tests: {stats['active_tests']}\n\n"
         f"⚡ Average latency: <b>{avg_lat}</b>\n"
@@ -205,7 +191,6 @@ async def stats_command(message: Message):
         f"🐌 Worst latency: {worst_lat}\n\n"
         f"🕒 Last checked: {stats['last_check']}"
     )
-
     response = await message.answer(text, parse_mode="HTML")
     asyncio.create_task(delete_later(response, 30))
 
@@ -247,27 +232,19 @@ async def monitor_command(message: Message):
         )
         add_monitored_host(hostname)
 
-        icon = {
-            "ACTIVE": "🟢",
-            "UNSTABLE": "🟡",
-            "DEAD": "🔴",
-            "ERROR": "⚪",
-        }.get(result["status"], "⚪")
+        icon = {"ACTIVE": "🟢", "UNSTABLE": "🟡", "DEAD": "🔴", "ERROR": "⚪"}.get(result["status"], "⚪")
 
         await status_message.edit_text(
             f"🔄 <b>Monitoring enabled</b>\n\n"
             f"🌐 <code>{hostname}</code>\n"
             f"{icon} Current status: <b>{result['status']}</b>\n"
             f"⚡ Latency: {result['latency_ms']} ms\n\n"
-            f"The bot will automatically check this hostname every 5 minutes.",
+            f"Checks every 5 minutes.",
             parse_mode="HTML",
         )
     except Exception as error:
         print(f"Monitor setup error for {hostname}: {error}")
-        await status_message.edit_text(
-            "❌ <b>Could not start monitoring.</b>\n\nThe hostname could not be tested.",
-            parse_mode="HTML",
-        )
+        await status_message.edit_text("❌ <b>Could not start monitoring.</b>\n\nHost could not be tested.", parse_mode="HTML")
 
     asyncio.create_task(delete_later(status_message, 20))
 
@@ -305,12 +282,7 @@ async def monitored_command(message: Message):
     text = "📋 <b>MONITORED HOSTS</b>\n\n"
     for row in hosts:
         (host_id, hostname, network, enabled, last_status, last_latency, last_checked) = row
-        icon = {
-            "ACTIVE": "🟢",
-            "UNSTABLE": "🟡",
-            "DEAD": "🔴",
-            None: "⚪",
-        }.get(last_status, "⚪")
+        icon = {"ACTIVE": "🟢", "UNSTABLE": "🟡", "DEAD": "🔴", None: "⚪"}.get(last_status, "⚪")
         latency = f"{last_latency}ms" if last_latency is not None else "N/A"
         text += f"{icon} <code>{hostname}</code>\n"
         text += f"   ⚡ {latency}\n"
@@ -332,7 +304,7 @@ async def choose_network(callback: CallbackQuery):
 async def network_selected(callback: CallbackQuery):
     network = callback.data.split(":", 1)[1]
     await callback.message.edit_text(
-        f"📱 Selected network: <b>{network}</b>\n\nNetwork selection is ready for diagnostics.",
+        f"📱 Selected network: <b>{network}</b>\n\nReady for diagnostics.",
         reply_markup=main_menu(),
         parse_mode="HTML",
     )
@@ -386,26 +358,13 @@ async def test_command(message: Message):
             https=result["https"],
             latency_ms=result["latency_ms"] if isinstance(result["latency_ms"], int) else None,
         )
-        status_icon = {
-            "ACTIVE": "🟢",
-            "UNSTABLE": "🟡",
-            "DEAD": "🔴",
-            "ERROR": "⚪",
-        }.get(result["status"], "⚪")
-
-        dns_str = "✓" if result['dns'] else "✗"
-        tcp_str = "✓" if result['tcp'] else "✗"
-        tls_str = "✓" if result['tls'] else "✗"
-        https_str = "✓" if result['https'] else "✗"
+        icon = {"ACTIVE": "🟢", "UNSTABLE": "🟡", "DEAD": "🔴", "ERROR": "⚪"}.get(result["status"], "⚪")
+        d, tcp, tls, https = "✓" if result['dns'] else "✗", "✓" if result['tcp'] else "✗", "✓" if result['tls'] else "✗", "✓" if result['https'] else "✗"
 
         await status_message.edit_text(
             f"🧪 <code>{result['hostname']}</code>\n\n"
-            f"{status_icon} <b>{result['status']}</b>"
-            f" · {result['latency_ms']} ms\n\n"
-            f"DNS {dns_str}  "
-            f"TCP {tcp_str}  "
-            f"TLS {tls_str}  "
-            f"HTTPS {https_str}",
+            f"{icon} <b>{result['status']}</b> · {result['latency_ms']} ms\n\n"
+            f"DNS {d}  TCP {tcp}  TLS {tls}  HTTPS {https}",
             parse_mode="HTML",
         )
     except Exception as error:
@@ -420,13 +379,7 @@ async def test_command(message: Message):
 @router.callback_query(F.data == "status")
 async def status(callback: CallbackQuery):
     rankings = get_top_hostnames(5)
-    text = (
-        "📊 <b>ZED SNI SCANNER</b>\n\n"
-        "🟢 Core bot: Online\n"
-        "🟢 Hostname testing: Available\n"
-        "🟢 Database: Recording results\n\n"
-        "🏆 <b>TOP HOSTNAMES</b>\n\n"
-    )
+    text = "📊 <b>ZED SNI SCANNER</b>\n\n🟢 Core bot: Online\n🟢 Hostname testing: Available\n🟢 Database: Recording results\n\n🏆 <b>TOP HOSTNAMES</b>\n\n"
 
     if not rankings:
         text += "No test results available yet."
@@ -442,11 +395,7 @@ async def status(callback: CallbackQuery):
                 f"   🧪 Tests: {item['total_tests']}\n\n"
             )
 
-    await callback.message.edit_text(
-        text,
-        reply_markup=main_menu(),
-        parse_mode="HTML",
-    )
+    await callback.message.edit_text(text, reply_markup=main_menu(), parse_mode="HTML")
     await callback.answer()
 
 @router.message(Command("scan"))
@@ -459,7 +408,7 @@ async def scan_command(message: Message):
 
 async def run_network_scan(message: Message, network_label: str, hostnames: list):
     status_msg = await message.answer(
-        f"🔎 Scanning <b>{network_label}</b> network for active SNI hosts...\n\nTesting {len(hostnames)} hostnames. Please wait...",
+        f"🔎 Scanning <b>{network_label}</b> network...\n\nTesting {len(hostnames)} hostnames. Please wait...",
         parse_mode="HTML",
     )
 
@@ -484,11 +433,11 @@ async def run_network_scan(message: Message, network_label: str, hostnames: list
                 results.append(f"❌ {result['hostname']}")
 
             if (i + 1) % 3 == 0 or (i + 1) == len(hostnames):
-                active_count = sum(1 for r in results if "✅" in r)
+                active = sum(1 for r in results if "✅" in r)
                 await status_msg.edit_text(
                     f"🔎 Scanning <b>{network_label}</b>...\n\n"
                     f"Tested {i + 1}/{len(hostnames)}\n\n"
-                    f"✅ Working: {active_count}",
+                    f"✅ Working: {active}",
                     parse_mode="HTML",
                 )
             await asyncio.sleep(0.5)
@@ -496,19 +445,18 @@ async def run_network_scan(message: Message, network_label: str, hostnames: list
             results.append(f"❌ {host} (Error)")
             print(f"Scan error for {host}: {e}")
 
-    working_hosts = [r for r in results if "✅" in r]
+    working = [r for r in results if "✅" in r]
     text = f"📊 <b>Scan complete for {network_label}</b>\n\n"
-    if working_hosts:
-        text += f"✅ <b>Working SNI hosts ({len(working_hosts)}):</b>\n"
-        for w in working_hosts:
-            clean_w = w.replace("✅ ", "").replace("🟡 ", "").replace("❌ ", "")
-            text += f"<code>{clean_w}</code>\n"
+    if working:
+        text += f"✅ <b>Working SNI hosts ({len(working)}):</b>\n"
+        for w in working:
+            text += f"<code>{w.replace('✅ ', '').replace('🟡 ', '').replace('❌ ', '')}</code>\n"
         text += "\n"
     else:
-        text += "❌ No active SNI hosts found for this network.\n\n"
+        text += "❌ No active SNI hosts found.\n\n"
 
     text += f"📝 Total tested: {len(results)}\n"
-    text += f"🟢 Active: {len(working_hosts)}"
+    text += f"🟢 Active: {len(working)}"
 
     await status_msg.edit_text(text, parse_mode="HTML")
     asyncio.create_task(delete_later(status_msg, 20))
@@ -516,29 +464,26 @@ async def run_network_scan(message: Message, network_label: str, hostnames: list
 @router.callback_query(F.data == "scan_mtn")
 async def scan_mtn(callback: CallbackQuery):
     await callback.answer()
-    hostnames = NETWORK_HOSTNAMES.get("mtn", [])
-    asyncio.create_task(run_network_scan(callback.message, "MTN Zambia", hostnames))
+    asyncio.create_task(run_network_scan(callback.message, "MTN Zambia", NETWORK_HOSTNAMES.get("mtn", [])))
 
 @router.callback_query(F.data == "scan_airtel")
 async def scan_airtel(callback: CallbackQuery):
     await callback.answer()
-    hostnames = NETWORK_HOSTNAMES.get("airtel", [])
-    asyncio.create_task(run_network_scan(callback.message, "Airtel Zambia", hostnames))
+    asyncio.create_task(run_network_scan(callback.message, "Airtel Zambia", NETWORK_HOSTNAMES.get("airtel", [])))
 
 @router.callback_query(F.data == "scan_zamtel")
 async def scan_zamtel(callback: CallbackQuery):
     await callback.answer()
-    hostnames = NETWORK_HOSTNAMES.get("zamtel", [])
-    asyncio.create_task(run_network_scan(callback.message, "Zamtel Zambia", hostnames))
+    asyncio.create_task(run_network_scan(callback.message, "Zamtel Zambia", NETWORK_HOSTNAMES.get("zamtel", [])))
 
 @router.callback_query(F.data == "scan_custom")
 async def scan_custom_prompt(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text(
         "📝 <b>Custom Network Scan</b>\n\n"
-        "Please type the hostnames you want to test (one per line, or separated by spaces/commas).\n\n"
+        "Please type the hostnames you want to test (separated by spaces, commas, or new lines).\n\n"
         "Example:\n<code>myvpn.com api.mysite.com</code>\n\n"
-        "Send your list as a message now.",
+        "Send your list now.",
         parse_mode="HTML",
     )
     user_custom_scan[callback.from_user.id] = True
@@ -550,12 +495,15 @@ async def handle_custom_hostname(message: Message):
         return
 
     del user_custom_scan[user_id]
-
-    raw_text = message.text.strip()
-    hostnames = [h.strip() for h in re.split(r'[\n\s,]+', raw_text) if h.strip()]
+    hostnames = [h.strip() for h in re.split(r'[\n\s,]+', message.text.strip()) if h.strip()]
 
     if not hostnames:
         await message.answer("❌ No valid hostnames provided. Please try again.", parse_mode="HTML")
         return
 
+    # **CRITICAL FIX FOR LINE 561: Make sure these 3 lines are INDENTED by 4 spaces exactly!**
     if len(hostnames) > 20:
+        await message.answer("⚠️ Too many hostnames! Please limit to 20 or fewer.", parse_mode="HTML")
+        return
+
+    asyncio.create_task(run_network_scan(message, "Custom Network", hostnames))
