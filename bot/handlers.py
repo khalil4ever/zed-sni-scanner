@@ -8,7 +8,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery
 
 from bot.keyboards import main_menu, network_selection_keyboard
-from scanner.tester import test_hostname
+from scanner.tester import test_hostname, scan_multiport  # Imported the new multiport scanner
 from database.database import (
     save_result,
     get_hostname_stats,
@@ -408,58 +408,79 @@ async def scan_command(message: Message):
 
 async def run_network_scan(message: Message, network_label: str, hostnames: list):
     status_msg = await message.answer(
-        f"🔎 Scanning <b>{network_label}</b> network...\n\nTesting {len(hostnames)} hostnames. Please wait...",
+        f"🔎 Scanning <b>{network_label}</b> network for active SNI hosts and open ports...\n\nTesting {len(hostnames)} hostnames. Please wait...",
         parse_mode="HTML",
     )
 
     results = []
     for i, host in enumerate(hostnames):
+        # Update progress bar per domain (since multi-port is slower)
+        await status_msg.edit_text(
+            f"🔎 Testing <b>{host}</b> ({i+1}/{len(hostnames)})...",
+            parse_mode="HTML"
+        )
+
         try:
-            result = await test_hostname(host)
+            # Use the new multi-port scanner
+            port_data = await scan_multiport(host)
+
+            # Determine overall status for database saving
+            has_tls = any(p["active"] and p["type"] == "TLS/SNI" for p in port_data)
+            has_tcp = any(p["active"] and p["type"] == "TCP-Only" for p in port_data)
+            status = "ACTIVE" if has_tls else "UNSTABLE" if has_tcp else "DEAD"
+
+            # Save to database
             save_result(
-                hostname=result["hostname"],
-                status=result["status"],
-                dns=result["dns"],
-                tcp=result["tcp"],
-                tls=result["tls"],
-                https=result["https"],
-                latency_ms=result["latency_ms"] if isinstance(result["latency_ms"], int) else None,
+                hostname=host,
+                status=status,
+                dns=True if status != "DEAD" else False,
+                tcp=has_tcp or has_tls,
+                tls=has_tls,
+                https=has_tls,
+                latency_ms=None, # Multiport doesn't measure a single latency
+                network=network_label,
             )
-            if result["status"] == "ACTIVE":
-                results.append(f"✅ {result['hostname']} ({result['latency_ms']} ms)")
-            elif result["status"] == "UNSTABLE":
-                results.append(f"🟡 {result['hostname']} ({result['latency_ms']} ms)")
+
+            # Format the response for the user
+            if status != "DEAD":
+                tls_ports = [str(p["port"]) for p in port_data if p["active"] and p["type"] == "TLS/SNI"]
+                tcp_ports = [str(p["port"]) for p in port_data if p["active"] and p["type"] == "TCP-Only"]
+                
+                port_str = ""
+                if tls_ports:
+                    port_str += "TLS: " + ", ".join(tls_ports)
+                    if tcp_ports:
+                        port_str += " | TCP: " + ", ".join(tcp_ports)
+                else:
+                    port_str += "TCP: " + ", ".join(tcp_ports)
+                
+                results.append(f"✅ <code>{host}</code> (Ports: {port_str})")
             else:
-                results.append(f"❌ {result['hostname']}")
+                results.append(f"❌ <code>{host}</code> (Dead)")
 
-            if (i + 1) % 3 == 0 or (i + 1) == len(hostnames):
-                active = sum(1 for r in results if "✅" in r)
-                await status_msg.edit_text(
-                    f"🔎 Scanning <b>{network_label}</b>...\n\n"
-                    f"Tested {i + 1}/{len(hostnames)}\n\n"
-                    f"✅ Working: {active}",
-                    parse_mode="HTML",
-                )
-            await asyncio.sleep(0.5)
         except Exception as e:
-            results.append(f"❌ {host} (Error)")
-            print(f"Scan error for {host}: {e}")
+            results.append(f"❌ <code>{host}</code> (Error)")
+            print(f"Multi-port scan error for {host}: {e}")
+        
+        await asyncio.sleep(0.5)
 
-    working = [r for r in results if "✅" in r]
+    # Build final summary
+    working_hosts = [r for r in results if "✅" in r]
     text = f"📊 <b>Scan complete for {network_label}</b>\n\n"
-    if working:
-        text += f"✅ <b>Working SNI hosts ({len(working)}):</b>\n"
-        for w in working:
-            text += f"<code>{w.replace('✅ ', '').replace('🟡 ', '').replace('❌ ', '')}</code>\n"
+    if working_hosts:
+        text += f"✅ <b>Working SNI hosts ({len(working_hosts)}):</b>\n"
+        for w in working_hosts:
+            # Clean out the "✅ " prefix for the list display
+            text += f"{w}\n"
         text += "\n"
     else:
-        text += "❌ No active SNI hosts found.\n\n"
+        text += "❌ No active hosts found for this network.\n\n"
 
     text += f"📝 Total tested: {len(results)}\n"
-    text += f"🟢 Active: {len(working)}"
+    text += f"🟢 Active: {len(working_hosts)}"
 
     await status_msg.edit_text(text, parse_mode="HTML")
-    asyncio.create_task(delete_later(status_msg, 20))
+    asyncio.create_task(delete_later(status_msg, 30))
 
 @router.callback_query(F.data == "scan_mtn")
 async def scan_mtn(callback: CallbackQuery):
@@ -501,9 +522,8 @@ async def handle_custom_hostname(message: Message):
         await message.answer("❌ No valid hostnames provided. Please try again.", parse_mode="HTML")
         return
 
-    # **CRITICAL FIX FOR LINE 561: Make sure these 3 lines are INDENTED by 4 spaces exactly!**
     if len(hostnames) > 20:
         await message.answer("⚠️ Too many hostnames! Please limit to 20 or fewer.", parse_mode="HTML")
         return
 
-    asyncio.create_task(run_network_scan(message, "Custom Network", hostnames))
+    asyncio.create_task(run_network_scan(message, "Custom Network", ho
