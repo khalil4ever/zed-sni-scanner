@@ -11,6 +11,15 @@ A Zambia-focused Telegram utility for authorized hostname/SNI connectivity diagn
 - SQLite foundation
 - Environment-variable configuration
 
+## Deploy for Free (1-Click)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/khalil4ever/zed-sni-scanner)
+
+1. Click **Deploy to Render** above and sign in with GitHub (no credit card required).
+2. Paste your Telegram `BOT_TOKEN` from `@BotFather`.
+3. Click **Deploy Blueprint** — your bot will go live automatically.
+4. *(Optional, to keep Render's free tier awake 24/7)*: Add your Render URL (`https://<your-app>.onrender.com/health`) to a free monitor like [cron-job.org](https://cron-job.org) or [UptimeRobot](https://uptimerobot.com) to ping every 10 minutes.
+
 ## Run locally
 
 1. Create a virtual environment.

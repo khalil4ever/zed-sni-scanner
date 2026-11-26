@@ -2,7 +2,7 @@ import sqlite3
 import os
 
 # Database file path (default to local)
-DB_PATH = "zed_sni.db"
+DB_PATH = os.getenv("DATABASE_PATH", "zed_sni.db")
 
 def init_db():
     """Initializes the SQLite database and creates tables if they don't exist."""
@@ -158,7 +158,11 @@ def get_monitored_hosts():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM monitored_hosts ORDER BY created_at DESC")
+    cursor.execute("""
+    SELECT id, hostname, network, enabled, last_status, last_latency_ms, last_checked_at
+    FROM monitored_hosts
+    ORDER BY created_at DESC
+    """)
     rows = cursor.fetchall()
     conn.close()
     return [tuple(row) for row in rows]

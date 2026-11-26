@@ -221,6 +221,7 @@ async def monitor_command(message: Message):
 
     try:
         result = await test_hostname(hostname)
+        latency_val = int(round(result["latency_ms"])) if isinstance(result["latency_ms"], (int, float)) else None
         save_result(
             hostname=result["hostname"],
             status=result["status"],
@@ -228,17 +229,18 @@ async def monitor_command(message: Message):
             tcp=result["tcp"],
             tls=result["tls"],
             https=result["https"],
-            latency_ms=result["latency_ms"] if isinstance(result["latency_ms"], int) else None,
+            latency_ms=latency_val,
         )
         add_monitored_host(hostname)
 
         icon = {"ACTIVE": "🟢", "UNSTABLE": "🟡", "DEAD": "🔴", "ERROR": "⚪"}.get(result["status"], "⚪")
+        latency_str = f"{result['latency_ms']} ms" if result["latency_ms"] is not None else "N/A"
 
         await status_message.edit_text(
             f"🔄 <b>Monitoring enabled</b>\n\n"
             f"🌐 <code>{hostname}</code>\n"
             f"{icon} Current status: <b>{result['status']}</b>\n"
-            f"⚡ Latency: {result['latency_ms']} ms\n\n"
+            f"⚡ Latency: {latency_str}\n\n"
             f"Checks every 5 minutes.",
             parse_mode="HTML",
         )
@@ -349,6 +351,7 @@ async def test_command(message: Message):
 
     try:
         result = await test_hostname(hostname)
+        latency_val = int(round(result["latency_ms"])) if isinstance(result["latency_ms"], (int, float)) else None
         save_result(
             hostname=result["hostname"],
             status=result["status"],
@@ -356,14 +359,15 @@ async def test_command(message: Message):
             tcp=result["tcp"],
             tls=result["tls"],
             https=result["https"],
-            latency_ms=result["latency_ms"] if isinstance(result["latency_ms"], int) else None,
+            latency_ms=latency_val,
         )
         icon = {"ACTIVE": "🟢", "UNSTABLE": "🟡", "DEAD": "🔴", "ERROR": "⚪"}.get(result["status"], "⚪")
         d, tcp, tls, https = "✓" if result['dns'] else "✗", "✓" if result['tcp'] else "✗", "✓" if result['tls'] else "✗", "✓" if result['https'] else "✗"
+        latency_str = f"{result['latency_ms']} ms" if result["latency_ms"] is not None else "N/A"
 
         await status_message.edit_text(
             f"🧪 <code>{result['hostname']}</code>\n\n"
-            f"{icon} <b>{result['status']}</b> · {result['latency_ms']} ms\n\n"
+            f"{icon} <b>{result['status']}</b> · {latency_str}\n\n"
             f"DNS {d}  TCP {tcp}  TLS {tls}  HTTPS {https}",
             parse_mode="HTML",
         )
